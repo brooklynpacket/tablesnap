@@ -47,7 +47,7 @@ All configuration for tablesnap happens on the command line. If you are using
 the Debian package, you'll set these options in the `DAEMON_OPTS` variable in
 `/etc/default/tablesnap`.
 
-    Usage: tablesnap [options] <bucket> <path> [...]
+    Usage: tablesnap [options] <bucket:prefix:path:regex> [...]
     Options:
       -h, --help            show this help message and exit
       -k AWS_KEY, --aws-key=AWS_KEY
@@ -56,14 +56,58 @@ the Debian package, you'll set these options in the `DAEMON_OPTS` variable in
       -a, --auto-add        Automatically start watching new subdirectories within path(s)
       -B, --backup          Backup existing SSTables to S3 if they're not already there
 
+    bucket: s3 bucket
+    prefix: subdirectory under s3 bucket
+    path: local folder location to watch
+    regex: file name to match under the local path
+
+    prefix and regex can be optionally left blank, while bucket and path are required
+    the regex needs to be a valid python regex and while be compared using the 're' module and the 'match' function
 
 For example:
 
-	$ tablesnap -k AAAAAAAAAAAAAAAA -s BBBBBBBBBBBBBBBB me.synack.sstables /var/lib/cassandra/data/GiantKeyspace
+	$ tablesnap -k AAAAAAAAAAAAAAAA -s BBBBBBBBBBBBBBBB me.synack.sstables:location/in/s3:/var/lib/cassandra/data/GiantKeyspace:columnfamily-hc.*db
 
 This would cause tablesnap to use the given Amazon Web Services credentials to
 backup the SSTables for my `GiantKeyspace` to the S3 bucket named
 `me.synack.sstables`.
+
+
+Notes
+-----
+
+Tablesnap respawns by default when launched from the init.d script
+
+A path can only be watched once, but the regex allows you to watch different files within that path
+
+By following this strategy, we are able to monitor both staging and prod on the same cassandra cluster
+and upload to separate staging and production buckets in s3.  We can also cherry pick which
+column family's from a given keyspace we want to back up
+
+
+Debian Packaging
+----------------
+
+https://wiki.ubuntu.com/PackagingGuide/Complete
+
+To build your own .deb from this repo..
+
+git clone git://github.com/brooklynpacket/tablesnap.git
+cd tablesnap
+sudo apt-get install cdbs debuild
+debuild -us -uc
+
+The debuild command disables gpg key signing.
+The build must take place on a Linux box.  Tested with Ubuntu Lucid.
+
+To install the tablesnap.deb you just built..
+(optionally, a pre-built .deb is available: wget ...)
+
+apt-get install python-pip python-pyinotify daemon
+pip install pyinotify boto
+lesspipe tablesnap.deb
+sudo dpkg --install tablesnap.deb
+
 
 Questions, Comments, and Help
 -----------------------------

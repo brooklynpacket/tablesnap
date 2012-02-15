@@ -46,7 +46,7 @@ running()
 case "$1" in
   start)
         echo -n "Starting $DESC: "
-        daemon --name=$NAME --unsafe --pidfile=$PIDFILE --output=$LOGDIR/$NAME.log -- $DAEMON $DAEMON_OPTS
+        daemon --respawn --name=$NAME --unsafe --pidfile=$PIDFILE --output=$LOGDIR/$NAME.log -- $DAEMON $DAEMON_OPTS
         echo "$NAME."
         ;;
   stop)
@@ -56,7 +56,7 @@ case "$1" in
         ;;
   restart)
     echo -n "Restarting $DESC: "
-    daemon --name=$NAME --restart
+    daemon --name=$NAME --restart --respawn
     echo "$NAME."
     ;;
   status)

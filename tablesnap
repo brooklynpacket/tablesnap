@@ -1,4 +1,3 @@
-#!/usr/bin/env python
 import pyinotify
 import boto
 
@@ -11,7 +10,7 @@ import socket
 import json
 import sys
 import os
-
+import re
 
 log = logging.getLogger('tablesnap')
 stderr = logging.StreamHandler()
@@ -21,28 +20,36 @@ log.setLevel(logging.DEBUG)
 
 
 class UploadHandler(pyinotify.ProcessEvent):
-    def my_init(self, bucket=None):
+    def my_init(self, bucket=None, prefix=None, regex=None):
         self.bucket = bucket
-        self.hostname = socket.getfqdn()
+        self.prefix = prefix
+        self.regex = regex
+#        self.hostname = socket.getfqdn()
 
     def process_IN_MOVED_TO(self, event):
         if event.pathname.find('-tmp') == -1:
-            keyname = '%s:%s' % (self.hostname, event.pathname)
+            filename = event.pathname.split("/")[-1]
+            keyname = '%s/%s' % (self.prefix, filename)
             key = self.bucket.get_key(keyname)
             if key is None:
                 t = Thread(target=self.upload_sstable, args=(
-                           keyname, event.pathname))
+                           keyname, event.pathname, filename))
                 t.setDaemon(True)
                 t.start()
             else:
-                log.info("Keyname %s already exists, skipping upload" % keyname)
+                log.warning("Keyname %s already exists, skipping upload" % keyname)
 
-    def upload_sstable(self, keyname, filename, with_index=True):
+    def upload_sstable(self, keyname, filename, name, with_index=True):
         log.info('Uploading %s' % filename)
 
         def progress(sent, total):
             if sent == total:
                 log.info('Finished uploading %s' % filename)
+
+        log.debug("upload: %s - %s - %s" % (self.bucket.name, keyname, filename))
+        if self.regex and not re.match(self.regex, name):
+            log.debug('%s did not match %s, skipping' % (filename, self.regex))
+            return
 
         try:
             dirname = os.path.dirname(filename)
@@ -57,22 +64,21 @@ class UploadHandler(pyinotify.ProcessEvent):
             log.error('Error uploading %s\n%s' % (keyname, format_exc()))
 
 
-def backup_files(handler, bucket, paths):
-    for path in paths:
-        log.info('Backing up %s' % path)
-        for filename in os.listdir(path):
-            if filename.find('-tmp') != -1:
-                continue
-            keyname = '%s:%s/%s' % (handler.hostname, path, filename)
-            if not bucket.get_key(keyname):
-                handler.upload_sstable(keyname, '%s/%s' % (path, filename), with_index=False)
-            else:
-                log.info('Not uploading %s/%s, it already exists in this S3 bucket.' % (path, filename))
+def backup_files(handler, bucket, prefix, path, regex):
+    log.info('Backing up %s' % path)
+    for filename in os.listdir(path):
+        if filename.find('-tmp') != -1:
+            continue
+        keyname = '%s/%s' % (prefix, filename)
+        if not bucket.get_key(keyname):
+            handler.upload_sstable(keyname, '%s/%s' % (path, filename), filename, with_index=False)
+        else:
+            log.info('Not uploading %s/%s, it already exists in this S3 bucket.' % (path, filename))
     return 0
 
 
 def main():
-    parser = OptionParser(usage='%prog [options] <bucket> <path> [...]')
+    parser = OptionParser(usage='%prog [options] <bucket:prefix:path:regex> [...]')
     parser.add_option('-k', '--aws-key', dest='aws_key', default=None)
     parser.add_option('-s', '--aws-secret', dest='aws_secret', default=None)
     parser.add_option('-r', '--recursive', action='store_true', dest='recursive', default=False,
@@ -83,27 +89,38 @@ def main():
         help='Backup existing SSTables to S3 if they\'re not already there')
     options, args = parser.parse_args()
 
-    if len(args) < 2:
+    if len(args) < 1:
         parser.print_help()
         return -1
 
-    bucket = args[0]
-    paths = args[1:]
-
     s3 = boto.connect_s3(options.aws_key, options.aws_secret)
-    bucket = s3.get_bucket(bucket)
-    handler = UploadHandler(bucket=bucket)
 
-    if options.backup:
-        return backup_files(handler, bucket, paths)
+    for arg in args:
+        if len(arg.split(":")) != 4:
+           log.critical("all 4 of bucket:prefix:path:regex is required (blank is allowed for prefix and regex)")
+           return -1
 
     wm = pyinotify.WatchManager()
-    notifier = pyinotify.Notifier(wm, handler)
-    for path in paths:
-        ret = wm.add_watch(path, pyinotify.ALL_EVENTS, rec=options.recursive, auto_add=options.auto_add)
+    notifier = pyinotify.Notifier(wm)
+    for arg in args:
+        conf = arg.split(":")
+        bucket = conf[0]
+        prefix = conf[1].rstrip("/")
+        path = conf[2]
+        regex = conf[3]
+
+        bucket = s3.get_bucket(bucket)
+        handler = UploadHandler(bucket=bucket, prefix=prefix, regex=regex)
+
+        if options.backup:
+            backup_files(handler, bucket, prefix, path, regex)
+            continue
+
+        ret = wm.add_watch(path, pyinotify.ALL_EVENTS, proc_fun=handler, rec=options.recursive, auto_add=options.auto_add)
         if ret[path] == -1:
             log.critical('add_watch failed for %s, bailing out!' % path)
             return 1
+    log.info('looping notifier')
     notifier.loop()
 
 if __name__ == '__main__':
