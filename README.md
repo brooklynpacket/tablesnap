@@ -91,6 +91,7 @@ Debian Packaging
 https://wiki.ubuntu.com/PackagingGuide/Complete
 
 To build your own .deb from this repo..
+(optionally, a pre-built .deb is available: wget --no-check-certificate https://s3.amazonaws.com/tinyco.vendor/python/tablesnap_0.2_amd64.deb)
 
 git clone git://github.com/brooklynpacket/tablesnap.git
 cd tablesnap
@@ -100,13 +101,15 @@ debuild -us -uc
 The debuild command disables gpg key signing.
 The build must take place on a Linux box.  Tested with Ubuntu Lucid.
 
-To install the tablesnap.deb you just built..
-(optionally, a pre-built .deb is available: wget ...)
+
+To install the tablesnap.deb package..
 
 apt-get install python-pip python-pyinotify daemon
 pip install pyinotify boto
 lesspipe tablesnap.deb
 sudo dpkg --install tablesnap.deb
+
+set RUN and DAEMONOPTS variables in /etc/default/tablesnap
 
 
 Questions, Comments, and Help
