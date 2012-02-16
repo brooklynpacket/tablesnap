@@ -1,3 +1,5 @@
+#!/usr/bin/python
+
 import pyinotify
 import boto
 
@@ -26,7 +28,7 @@ class UploadHandler(pyinotify.ProcessEvent):
         self.regex = regex
 #        self.hostname = socket.getfqdn()
 
-    def process_IN_MOVED_TO(self, event):
+    def process_IN_CREATE(self, event):
         if event.pathname.find('-tmp') == -1:
             filename = event.pathname.split("/")[-1]
             keyname = '%s/%s' % (self.prefix, filename)
@@ -40,16 +42,16 @@ class UploadHandler(pyinotify.ProcessEvent):
                 log.warning("Keyname %s already exists, skipping upload" % keyname)
 
     def upload_sstable(self, keyname, filename, name, with_index=True):
-        log.info('Uploading %s' % filename)
 
         def progress(sent, total):
             if sent == total:
                 log.info('Finished uploading %s' % filename)
 
-        log.debug("upload: %s - %s - %s" % (self.bucket.name, keyname, filename))
         if self.regex and not re.match(self.regex, name):
-            log.debug('%s did not match %s, skipping' % (filename, self.regex))
+            log.debug('%s doesnt match %s, skipping' % (name, self.regex))
             return
+
+        log.info('Uploading %s' % filename)
 
         try:
             dirname = os.path.dirname(filename)
