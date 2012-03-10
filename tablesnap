@@ -56,14 +56,32 @@ class UploadHandler(pyinotify.ProcessEvent):
         try:
             dirname = os.path.dirname(filename)
             if with_index:
-                key = self.bucket.new_key('%s-listdir.json' % keyname)
-                key.set_contents_from_string(
-                    json.dumps({dirname: os.listdir(dirname)}))
+                dir_list = os.listdir(dirname)
+                retry_list = 0
+                while True:
+                    try:
+                        key = self.bucket.new_key('%s-listdir.json' % keyname)
+                        key.set_contents_from_string(json.dumps({dirname: dir_list}))
+                        break
+                    except:
+                        log.error('Error uploading %s-listdir.json, Attempt %d\n%s' % (keyname, retry_list, format_exc()))
+                        retry_list = retry_list + 1
+                        if retry_list >= 3:
+                            raise Exception("Exceeded 3 attempts at %s-listdir.json" % keyname)
 
-            key = self.bucket.new_key(keyname)
-            key.set_contents_from_filename(filename, replace=False, cb=progress)
+            retry = 0
+            while True:
+                try:
+                    key = self.bucket.new_key(keyname)
+                    key.set_contents_from_filename(filename, replace=False, cb=progress)
+                    break
+                except:
+                    log.error('Error uploading %s, Attempt %d\n%s' % (keyname, retry, format_exc()))
+                    retry = retry + 1
+                    if retry >= 3:
+                        raise Exception("Exceeded 3 attempts at %s" % keyname)
         except:
-            log.error('Error uploading %s\n%s' % (keyname, format_exc()))
+            log.error('Error uploading file set for %s\n%s' % (keyname, format_exc()))
 
 
 def backup_files(handler, bucket, prefix, path, regex):
