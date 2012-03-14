@@ -30,6 +30,10 @@ if [ -f /etc/default/tablesnap ] ; then
     . /etc/default/tablesnap
 fi
 
+if [ "x$VIRTUALENV" != "x" ]; then
+    source $VIRTUALENV
+fi
+
 if [ "$RUN" != "yes" ]; then
     echo "Set RUN=yes in /etc/default/tablesnap to start"
     exit 0
