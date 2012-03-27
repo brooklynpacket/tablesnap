@@ -5,7 +5,9 @@ import boto
 
 from optparse import OptionParser
 from traceback import format_exc
+import threading
 from threading import Thread
+import signal
 import logging
 import os.path
 import socket
@@ -20,13 +22,38 @@ stderr.setFormatter(logging.Formatter('%(asctime)s %(levelname)s %(message)s'))
 log.addHandler(stderr)
 log.setLevel(logging.DEBUG)
 
+notifier = None
+main_thread = threading.currentThread()
+
+def wait_threads():
+    log.info('waiting on threads to die')
+    for t in threading.enumerate():
+        if t is main_thread:
+            continue
+        log.debug('joining %s', t.getName())
+        t.join()
+    log.info('threads dead')
+
+def sighup_handler(signum, frame):
+    log.info('handling sighup (signum %d), stopping notifier and exit' % signum)
+    global notifier
+    notifier.stop()
+    #wait_threads()
+    sys.exit(0)
+
+def sigint_handler(signum, frame):
+    log.info('handling sigint (signum %d), stopping notifier and exit' % signum)
+    global notifier
+    notifier.stop()
+    #wait_threads()
+    sys.exit(0)
 
 class UploadHandler(pyinotify.ProcessEvent):
     def my_init(self, bucket=None, prefix=None, regex=None):
         self.bucket = bucket
         self.prefix = prefix
         self.regex = regex
-#        self.hostname = socket.getfqdn()
+        #self.hostname = socket.getfqdn()
 
     def process_IN_CREATE(self, event):
         if event.pathname.find('-tmp') == -1:
@@ -61,7 +88,7 @@ class UploadHandler(pyinotify.ProcessEvent):
                 while True:
                     try:
                         key = self.bucket.new_key('%s-listdir.json' % keyname)
-                        key.set_contents_from_string(json.dumps({dirname: dir_list}))
+                        key.set_contents_from_string(json.dumps({dirname: dir_list}), replace=True)
                         break
                     except:
                         log.error('Error uploading %s-listdir.json, Attempt %d\n%s' % (keyname, retry_list, format_exc()))
@@ -86,14 +113,18 @@ class UploadHandler(pyinotify.ProcessEvent):
 
 def backup_files(handler, bucket, prefix, path, regex):
     log.info('Backing up %s' % path)
-    for filename in os.listdir(path):
+    files = os.listdir(path)
+    for filename in files:
         if filename.find('-tmp') != -1:
             continue
-        keyname = '%s/%s' % (prefix, filename)
-        if not bucket.get_key(keyname):
-            handler.upload_sstable(keyname, '%s/%s' % (path, filename), filename, with_index=False)
-        else:
-            log.info('Not uploading %s/%s, it already exists in this S3 bucket.' % (path, filename))
+        try:
+            keyname = '%s/%s' % (prefix, filename)
+            if not bucket.get_key(keyname):
+                handler.upload_sstable(keyname, '%s/%s' % (path, filename), filename, with_index=False)
+            else:
+                log.info('Not uploading %s/%s, it already exists in this S3 bucket.' % (path, filename))
+        except Exception:
+            log.error("Error uploading existing file: " + traceback.format_exc())
     return 0
 
 
@@ -113,6 +144,7 @@ def main():
         parser.print_help()
         return -1
 
+    log.info('starting tablesnap')
     s3 = boto.connect_s3(options.aws_key, options.aws_secret)
 
     for arg in args:
@@ -121,26 +153,34 @@ def main():
            return -1
 
     wm = pyinotify.WatchManager()
+
+    global notifier
     notifier = pyinotify.Notifier(wm)
     for arg in args:
         conf = arg.split(":")
         bucket = conf[0]
         prefix = conf[1].rstrip("/")
-        path = conf[2]
+        path = conf[2].rstrip("/")
         regex = conf[3]
 
         bucket = s3.get_bucket(bucket)
         handler = UploadHandler(bucket=bucket, prefix=prefix, regex=regex)
 
         if options.backup:
-            backup_files(handler, bucket, prefix, path, regex)
-            continue
+            t = Thread(target=backup_files, args=(handler, bucket, prefix, path, regex))
+            t.setDaemon(True)
+            t.start()
 
         ret = wm.add_watch(path, pyinotify.ALL_EVENTS, proc_fun=handler, rec=options.recursive, auto_add=options.auto_add)
         if ret[path] == -1:
             log.critical('add_watch failed for %s, bailing out!' % path)
             return 1
     log.info('looping notifier')
+
+    signal.signal(signal.SIGINT, sigint_handler)
+    signal.signal(signal.SIGTERM, sigint_handler)
+    signal.signal(signal.SIGHUP, sighup_handler)
+
     notifier.loop()
 
 if __name__ == '__main__':

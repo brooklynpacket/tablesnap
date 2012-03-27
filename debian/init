@@ -59,13 +59,14 @@ case "$1" in
         echo "$NAME."
         ;;
   restart)
-    echo -n "Restarting $DESC: "
-    daemon --name=$NAME --restart --respawn
+    echo -n "Restarting $DESC: (try force-reload)"
+    daemon --name=$NAME --restart
     echo "$NAME."
     ;;
   force-reload)
     echo -n "Force-reloading $DESC: "
     daemon --name=$NAME --stop
+    [ -n "$DODTIME" ] && sleep $DODTIME
     daemon --respawn --name=$NAME --unsafe --pidfile=$PIDFILE --stdout=$LOGDIR/$NAME.log --stderr=$LOGDIR/$NAME.log --errlog=$LOGDIR/$NAME.log --dbglog=$LOGDIR/$NAME.log -- $DAEMON $DAEMON_OPTS
     echo "$NAME."
     ;;
